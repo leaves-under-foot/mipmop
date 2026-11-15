@@ -1,0 +1,44 @@
+name: rebuild site
+
+# When a release is published here, rebuild mipmop.app, so its download
+# section shows the new version. GitHub can take a few minutes to make a new
+# release the latest, so this first waits for the update feed to show it.
+# RENDER_DEPLOY_HOOK is the site's deploy hook URL, from its settings on
+# Render. The app's code and release workflow live in a private repo.
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for the update feed to show this release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          FEED: https://github.com/${{ github.repository }}/releases/latest/download/releases.linux.json
+        run: |
+          version=${TAG#v}
+          for _ in $(seq 1 40); do
+            if curl -fsSL "$FEED" | jq -e --arg version "$version" 'any(.Assets[]; .Version == $version)' > /dev/null; then
+              echo "The feed shows $version"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::The feed still doesn't show $version after 20 minutes"
+          exit 1
+      - name: Rebuild mipmop.app
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::error::Set the RENDER_DEPLOY_HOOK secret to the site's deploy hook URL"
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK" > /dev/null
+          echo "Asked Render to rebuild mipmop.app"
